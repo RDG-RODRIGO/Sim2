@@ -4,8 +4,8 @@ const FormData = require("form-data");
 module.exports = {
   config: {
     name: "imgur",
-    version: "1.0",
-    author: "Jubayer",
+    version: "1.1",
+    author: "Your Name",
     countDown: 10,
     role: 0,
     shortDescription: "Upload images/videos to Imgur",
@@ -14,53 +14,65 @@ module.exports = {
     guide: "{pn}imgur"
   },
 
-  onStart: async function() {},
-
-  onChat: async function({ event, message }) {
-  },
-
-  onReply: async function({ event, message, getLang, usersData, api }) {
+  onReply: async function ({ event, message }) {
     if (event.type !== "message_reply") return;
-    
     const replyMessage = event.body.toLowerCase();
     if (!replyMessage.includes("imgur")) return;
 
     try {
       const attachments = event.messageReply.attachments;
       if (!attachments || attachments.length === 0) {
-        return message.reply("❌ | আপনি কোন ছবি/GIF/ভিডিও রিপ্লাই করেন নি!");
+        return message.reply("❌ | No image/GIF/video replied to!");
       }
 
-      const attachment = attachments[0];
-      if (!["photo", "animated_image", "video"].includes(attachment.type)) {
-        return message.reply("❌ | শুধুমাত্র ছবি, GIF বা ভিডিও আপলোড করা যাবে!");
-      }
+      const clientId = process.env.IMGUR_CLIENT_ID || "6f1378a5a0c652e";
+      const links = [];
 
-      const clientId = "6f1378a5a0c652e";
-      
-      const imageResponse = await axios.get(attachment.url, {
-        responseType: "arraybuffer"
-      });
-
-      const formData = new FormData();
-      formData.append("image", Buffer.from(imageResponse.data, "binary"));
-
-      const uploadResponse = await axios.post("https://api.imgur.com/3/image", formData, {
-        headers: {
-          "Authorization": `Client-ID ${clientId}`,
-          ...formData.getHeaders()
+      for (const attachment of attachments) {
+        if (!["photo", "animated_image", "video"].includes(attachment.type)) {
+          continue;
         }
-      });
 
-      if (uploadResponse.data.success) {
-        const imgurLink = uploadResponse.data.data.link;
-        message.reply(`✅ | সফলভাবে Imgur-এ আপলোড করা হয়েছে!\n🔗 লিংক: ${imgurLink}`);
+        // Validate file size
+        const maxFileSize = attachment.type === "video" ? 200 * 1024 * 1024 : 20 * 1024 * 1024;
+        const imageResponse = await axios.get(attachment.url, { responseType: "arraybuffer" });
+        if (imageResponse.data.length > maxFileSize) {
+          message.reply(`❌ | File too large! Max size: ${maxFileSize / (1024 * 1024)}MB`);
+          continue;
+        }
+
+        // Upload to Imgur
+        const formData = new FormData();
+        formData.append("image", Buffer.from(imageResponse.data, "binary"));
+        const uploadResponse = await axios.post("https://api.imgur.com/3/image", formData, {
+          headers: {
+            Authorization: `Client-ID ${clientId}`,
+            ...formData.getHeaders()
+          }
+        });
+
+        if (uploadResponse.data.success) {
+          links.push(uploadResponse.data.data.link);
+        }
+      }
+
+      if (links.length > 0) {
+        message.reply(`✅ | Successfully uploaded to Imgur!\n🔗 Links:\n${links.join("\n")}`);
       } else {
-        message.reply("❌ | আপলোড ব্যর্থ হয়েছে, দয়া করে পরে আবার চেষ্টা করুন।");
+        message.reply("❌ | No files could be uploaded.");
       }
     } catch (error) {
       console.error(error);
-      message.reply("❌ | একটি ত্রুটি ঘটেছে: " + error.message);
+      if (error.response && error.response.status === 429) {
+        return message.reply("❌ | Imgur API rate limit exceeded. Please try again later.");
+      }
+      if (error.response) {
+        return message.reply(`❌ | Imgur API error: ${error.response.data.data.error || error.message}`);
+      }
+      if (error.request) {
+        return message.reply("❌ | Network error: Could not connect to the server.");
+      }
+      message.reply(`❌ | An error occurred: ${error.message}`);
     }
   }
 };
